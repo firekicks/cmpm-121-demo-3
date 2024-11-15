@@ -1,113 +1,137 @@
-// Import necessary libraries
 import leaflet from "leaflet";
 import "leaflet/dist/leaflet.css";
+
 import "./style.css";
 import "./leafletWorkaround.ts";
 
+import { Board } from "./board.ts";
+
 import luck from "./luck.ts";
 
-// Constants
-const GAME_TITLE = "Geocoin Carrier";
-const HQ_LOCATION = leaflet.latLng(36.98949379578401, -122.06277128548504);
-const ZOOM_LEVEL = 19;
-const TILE_SIZE = 0.0001;
-const GRID_SPAN = 8;
-const CACHE_PROBABILITY = 0.15;
+interface Coin {
+  i: number;
+  j: number;
+  serial: number;
+}
 
-// Setup document elements
-document.title = GAME_TITLE;
-const canvasContainer = document.querySelector<HTMLDivElement>("#map")!;
+const GAME_NAME = "TreasureQuest Odyssey";
+document.title = GAME_NAME;
+
+// Create and append the header to the top of the document body
+const header = document.createElement("h1");
+header.textContent = GAME_NAME;
+header.style.textAlign = "center"; // Center the title
+document.body.insertBefore(header, document.body.firstChild); // Insert at the top
+
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 
-// Create the game map
-const gameMap = leaflet.map(canvasContainer, {
+const HQ_LOCATION = leaflet.latLng(36.98949379578401, -122.06277128548504);
+const ZOOM_LEVEL = 19;
+const TILE_SIZE = 1e-4;
+const GRID_STEPS = 8;
+const CACHE_SPAWN_CHANCE = 0.1;
+
+const playerCoins: Coin[] = [];
+const coinDisplay = document.createElement("p");
+coinDisplay.innerHTML = "Backpack: <div id=coins></div>";
+statusPanel.append(coinDisplay);
+
+const neighborhoodBoard = new Board(TILE_SIZE, GRID_STEPS);
+
+const map = leaflet.map(document.getElementById("map")!, {
   center: HQ_LOCATION,
   zoom: ZOOM_LEVEL,
   zoomControl: true,
 });
 
-// Add game header
-const headerElement = document.createElement("h1");
-headerElement.textContent = GAME_TITLE;
-canvasContainer.parentElement?.insertBefore(headerElement, canvasContainer);
-
-// Add map tile layer
 leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
+  maxZoom: ZOOM_LEVEL,
   attribution:
     '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(gameMap);
+}).addTo(map);
 
-// Initialize player location marker
-const playerMarker = leaflet.marker(HQ_LOCATION).addTo(gameMap);
-playerMarker.bindTooltip("You are here");
+const playerMarker = leaflet.marker(HQ_LOCATION).bindTooltip("You are here");
+playerMarker.addTo(map);
 
-let playerScore = 0;
-statusPanel.textContent = "0 points accumulated";
+function spawnCache(i: number, j: number, bounds: leaflet.LatLngBounds) {
+  const rect = leaflet.rectangle(bounds).addTo(map);
 
-// Function to manage cache creation and interactions
-function createCache(i: number, j: number) {
-  const bounds = leaflet.latLngBounds([
-    [HQ_LOCATION.lat + i * TILE_SIZE, HQ_LOCATION.lng + j * TILE_SIZE],
-    [
-      HQ_LOCATION.lat + (i + 1) * TILE_SIZE,
-      HQ_LOCATION.lng + (j + 1) * TILE_SIZE,
-    ],
-  ]);
-  const cacheRectangle = leaflet.rectangle(bounds).addTo(gameMap);
+  const coinCount = Math.floor(luck([i, j, "iniValue"].toString()) * 100);
+  const cacheCoins: Coin[] = Array.from({ length: coinCount }, (_, serial) => ({
+    i,
+    j,
+    serial,
+  }));
 
-  const cacheValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+  rect.bindPopup(() => {
+    const popupDiv = document.createElement("div");
+    popupDiv.innerHTML = `
+      <div>Cache at ${i}, ${j}. Tokens available: <span id="value">${cacheCoins.length}</span></div>
+      <button id="collect">Collect</button>
+      <button id="deposit">Deposit</button>
+      <div id="coins"></div>`;
 
-  cacheRectangle.on(
-    "click",
-    () => handleCacheInteraction(i, j, cacheValue, cacheRectangle),
-  );
+    // Update the display with the initial count of tokens
+    updateCoinCounter(cacheCoins, popupDiv);
+
+    popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
+      "click",
+      () => {
+        collectCoin(cacheCoins);
+        updateCoinCounter(cacheCoins, popupDiv); // Update count after collecting
+      },
+    );
+
+    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
+      "click",
+      () => {
+        depositCoin(cacheCoins);
+        updateCoinCounter(cacheCoins, popupDiv); // Update count after depositing
+      },
+    );
+
+    return popupDiv;
+  });
 }
 
-function handleCacheInteraction(
-  i: number,
-  j: number,
-  cacheValue: number,
-  cacheRectangle: leaflet.Rectangle,
-) {
-  const popupContent = `
-    <div>Cache available at "${i},${j}". It contains value <span id="value">${cacheValue}</span>.</div>
-    <button id="collectBtn">Collect</button><button id="depositBtn">Deposit</button>`;
-  const container = document.createElement("div");
-  container.innerHTML = popupContent;
-
-  const collectBtn = container.querySelector<HTMLButtonElement>("#collectBtn")!;
-  const depositBtn = container.querySelector<HTMLButtonElement>("#depositBtn")!;
-  const valueDisplay = container.querySelector<HTMLSpanElement>("#value")!;
-
-  collectBtn.addEventListener("click", () => {
-    if (cacheValue > 0) {
-      cacheValue--;
-      valueDisplay.textContent = cacheValue.toString();
-      playerScore++;
-      statusPanel.textContent = `${playerScore} points accumulated`;
-    }
-  });
-
-  depositBtn.addEventListener("click", () => {
-    if (playerScore > 0) {
-      cacheValue++;
-      valueDisplay.textContent = cacheValue.toString();
-      playerScore--;
-      statusPanel.textContent = `${playerScore} points accumulated`;
-    }
-  });
-
-  cacheRectangle.bindPopup(container).openPopup();
+function collectCoin(cacheCoins: Coin[]) {
+  if (cacheCoins.length > 0) {
+    const coin = cacheCoins.shift();
+    playerCoins.push(coin!);
+  }
 }
 
-// Generate caches on the map
-Array.from({ length: GRID_SPAN * 2 }, (_, i) => i - GRID_SPAN).forEach((i) =>
-  Array.from({ length: GRID_SPAN * 2 }, (_, j) => j - GRID_SPAN).forEach(
-    (j) => {
-      if (luck([i, j].toString()) < CACHE_PROBABILITY) {
-        createCache(i, j);
-      }
-    },
-  )
-);
+function depositCoin(cacheCoins: Coin[]) {
+  if (playerCoins.length > 0) {
+    const coin = playerCoins.pop();
+    cacheCoins.unshift(coin!);
+  }
+}
+
+function updateCoinCounter(cacheCoins: Coin[], popupDiv: HTMLDivElement) {
+  const availableCoinsDiv = popupDiv.querySelector<HTMLDivElement>("#coins")!;
+  availableCoinsDiv.innerHTML = "";
+  cacheCoins.slice(0, 5).forEach((coin) => {
+    availableCoinsDiv.innerHTML += `${coin.i}:${coin.j}#${coin.serial}</br>`;
+  });
+
+  // Update the token count in the popup
+  const valueSpan = popupDiv.querySelector<HTMLSpanElement>("#value")!;
+  valueSpan.textContent = cacheCoins.length.toString();
+
+  // Update player's inventory display in status panel
+  const inventoryCoinsDiv = statusPanel.querySelector<HTMLDivElement>(
+    "#coins",
+  )!;
+  inventoryCoinsDiv.innerHTML = "";
+  playerCoins.forEach((coin) => {
+    inventoryCoinsDiv.innerHTML += `${coin.i}:${coin.j}#${coin.serial}</br>`;
+  });
+}
+
+const nearbyCells = neighborhoodBoard.getCellsNearPoint(HQ_LOCATION);
+for (const cell of nearbyCells) {
+  if (luck([cell.i, cell.j].toString()) < CACHE_SPAWN_CHANCE) {
+    spawnCache(cell.i, cell.j, neighborhoodBoard.getCellBounds(cell));
+  }
+}
