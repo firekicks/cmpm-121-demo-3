@@ -72,12 +72,99 @@ class Player {
         break;
     }
     playerMarker.setLatLng([this.lat, this.lng]);
+    updatePlayerLocation(this.lat, this.lng);
     refreshCaches();
   }
 }
 
 const player = new Player();
 const cacheStates = new Map<string, string>();
+
+// Geolocation Tracking and State Management
+let isTrackingActive = false;
+let geoWatchId: number | null = null;
+const pathHistory: leaflet.LatLng[] = [];
+const playerPath = leaflet.polyline(pathHistory, { color: "blue" }).addTo(map);
+
+function toggleTracking() {
+  if (!isTrackingActive) {
+    isTrackingActive = true;
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        updatePlayerLocation(
+          position.coords.latitude,
+          position.coords.longitude,
+        );
+      });
+      geoWatchId = navigator.geolocation.watchPosition((position) => {
+        updatePlayerLocation(
+          position.coords.latitude,
+          position.coords.longitude,
+        );
+      });
+    } else {
+      alert("Your browser does not support geolocation.");
+    }
+  } else {
+    isTrackingActive = false;
+    if (geoWatchId !== null) {
+      navigator.geolocation.clearWatch(geoWatchId);
+    }
+  }
+}
+
+function updatePlayerLocation(lat: number, lng: number) {
+  player.lat = lat;
+  player.lng = lng;
+  playerMarker.setLatLng([lat, lng]);
+  pathHistory.push(leaflet.latLng(lat, lng));
+  playerPath.setLatLngs(pathHistory);
+  map.panTo([lat, lng]);
+  saveGameState();
+}
+
+function saveGameState() {
+  const state = {
+    playerPosition: { lat: player.lat, lng: player.lng },
+    path: pathHistory.map((latlng) => [latlng.lat, latlng.lng]),
+    collectedCoins: playerCoins,
+  };
+  localStorage.setItem("gameState", JSON.stringify(state));
+}
+
+function loadGameState() {
+  const savedState = localStorage.getItem("gameState");
+  if (savedState) {
+    const { playerPosition, path, collectedCoins } = JSON.parse(savedState);
+    player.lat = playerPosition.lat;
+    player.lng = playerPosition.lng;
+    pathHistory.push(
+      ...path.map(([lat, lng]: [number, number]) => leaflet.latLng(lat, lng)),
+    );
+    playerCoins.push(...collectedCoins);
+    playerMarker.setLatLng([player.lat, player.lng]);
+    playerPath.setLatLngs(pathHistory);
+    refreshCaches();
+  }
+}
+
+// Load state on initialization
+loadGameState();
+
+// Button to reset the game state
+function resetGameState() {
+  if (prompt("Type 'YES' to reset the game state.") === "YES") {
+    localStorage.removeItem("gameState");
+    playerCoins.length = 0;
+    pathHistory.length = 0;
+    playerPath.setLatLngs([]);
+    player.lat = HQ_LOCATION.lat;
+    player.lng = HQ_LOCATION.lng;
+    playerMarker.setLatLng(HQ_LOCATION);
+    refreshCaches();
+    saveGameState();
+  }
+}
 
 // Cache and Memento Creation
 function createCache(
@@ -193,10 +280,28 @@ function refreshCaches() {
   }
 }
 
+// Create a container for the map and movement panel
+const mapContainer = document.createElement("div");
+mapContainer.style.position = "relative"; // Ensure relative positioning
+mapContainer.style.width = "100%";
+mapContainer.style.height = "80vh"; // Adjust height as needed
+document.body.appendChild(mapContainer);
+
+// Append the map to the container
+mapContainer.appendChild(document.getElementById("map")!);
+
+// Append statusPanel to the container if it's needed to be visible
+if (statusPanel) {
+  mapContainer.appendChild(statusPanel);
+}
+
 // Create movement control buttons
 const movementPanel = document.createElement("div");
-movementPanel.style.textAlign = "center";
-document.body.appendChild(movementPanel);
+movementPanel.style.position = "absolute";
+movementPanel.style.top = "-50px"; // Adjust as needed
+movementPanel.style.left = "10px"; // Adjust as needed
+movementPanel.style.zIndex = "1000"; // Ensure buttons stay on top of the map
+mapContainer.appendChild(movementPanel);
 
 // Create a mapping between directions and their corresponding arrow symbols
 const directionMap = {
@@ -207,9 +312,24 @@ const directionMap = {
 } as const;
 
 Object.keys(directionMap).forEach((direction) => {
-  const dirKey = direction as keyof typeof directionMap; // Assert the type here
+  const dirKey = direction as keyof typeof directionMap;
   const button = document.createElement("button");
-  button.textContent = directionMap[dirKey]; // No error here
+  button.textContent = directionMap[dirKey];
+  button.style.margin = "2px"; // Add margin for spacing between buttons
   button.addEventListener("click", () => player.move(dirKey));
   movementPanel.appendChild(button);
 });
+
+// Create Geolocation Button
+const geoButton = document.createElement("button");
+geoButton.textContent = "🌐";
+geoButton.style.margin = "5px";
+geoButton.addEventListener("click", toggleTracking);
+movementPanel.appendChild(geoButton);
+
+// Create Game State Reset Button
+const resetButton = document.createElement("button");
+resetButton.textContent = "🚮";
+resetButton.style.margin = "5px";
+resetButton.addEventListener("click", resetGameState);
+movementPanel.appendChild(resetButton);
