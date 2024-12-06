@@ -4,6 +4,7 @@ import "./style.css";
 import "./leafletWorkaround.ts";
 import { Board } from "./board.ts";
 import luck from "./luck.ts";
+import { setupMovementControls } from "./movement.ts";
 
 interface Coin {
   i: number;
@@ -86,7 +87,7 @@ let geoWatchId: number | null = null;
 const pathHistory: leaflet.LatLng[] = [];
 const playerPath = leaflet.polyline(pathHistory, { color: "blue" }).addTo(map);
 
-function toggleTracking() {
+function _toggleTracking() {
   if (!isTrackingActive) {
     isTrackingActive = true;
     if (navigator.geolocation) {
@@ -112,6 +113,12 @@ function toggleTracking() {
     }
   }
 }
+
+// Add a button to toggle tracking
+const trackingButton = document.createElement("button");
+trackingButton.textContent = "Toggle Tracking";
+trackingButton.addEventListener("click", _toggleTracking);
+statusPanel.appendChild(trackingButton);
 
 function updatePlayerLocation(lat: number, lng: number) {
   player.lat = lat;
@@ -151,7 +158,6 @@ function loadGameState() {
 // Load state on initialization
 loadGameState();
 
-// Button to reset the game state
 function resetGameState() {
   if (prompt("Type 'YES' to reset the game state.") === "YES") {
     localStorage.removeItem("gameState");
@@ -167,13 +173,7 @@ function resetGameState() {
 }
 
 // Cache and Memento Creation
-function createCache(
-  i: number,
-  j: number,
-): {
-  tokens: Coin[];
-  memento: { toMemento(): string; fromMemento(memento: string): void };
-} {
+function createCache(i: number, j: number): { tokens: Coin[]; memento: { toMemento(): string; fromMemento(memento: string): void } } {
   const tokens: Coin[] = Array.from({
     length: Math.floor(luck([i, j].toString()) * 100),
   }, (_, serial) => ({ i, j, serial }));
@@ -280,56 +280,8 @@ function refreshCaches() {
   }
 }
 
-// Create a container for the map and movement panel
-const mapContainer = document.createElement("div");
-mapContainer.style.position = "relative"; // Ensure relative positioning
-mapContainer.style.width = "100%";
-mapContainer.style.height = "80vh"; // Adjust height as needed
-document.body.appendChild(mapContainer);
-
-// Append the map to the container
-mapContainer.appendChild(document.getElementById("map")!);
-
-// Append statusPanel to the container if it's needed to be visible
-if (statusPanel) {
-  mapContainer.appendChild(statusPanel);
-}
-
-// Create movement control buttons
-const movementPanel = document.createElement("div");
-movementPanel.style.position = "absolute";
-movementPanel.style.top = "-50px"; // Adjust as needed
-movementPanel.style.left = "10px"; // Adjust as needed
-movementPanel.style.zIndex = "1000"; // Ensure buttons stay on top of the map
-mapContainer.appendChild(movementPanel);
-
-// Create a mapping between directions and their corresponding arrow symbols
-const directionMap = {
-  north: "⬆️",
-  south: "⬇️",
-  east: "➡️",
-  west: "⬅️",
-} as const;
-
-Object.keys(directionMap).forEach((direction) => {
-  const dirKey = direction as keyof typeof directionMap;
-  const button = document.createElement("button");
-  button.textContent = directionMap[dirKey];
-  button.style.margin = "2px"; // Add margin for spacing between buttons
-  button.addEventListener("click", () => player.move(dirKey));
-  movementPanel.appendChild(button);
-});
-
-// Create Geolocation Button
-const geoButton = document.createElement("button");
-geoButton.textContent = "🌐";
-geoButton.style.margin = "5px";
-geoButton.addEventListener("click", toggleTracking);
-movementPanel.appendChild(geoButton);
-
-// Create Game State Reset Button
-const resetButton = document.createElement("button");
-resetButton.textContent = "🚮";
-resetButton.style.margin = "5px";
-resetButton.addEventListener("click", resetGameState);
-movementPanel.appendChild(resetButton);
+// Setup movement controls
+setupMovementControls(
+  (direction: string) => player.move(direction),
+  resetGameState
+);
